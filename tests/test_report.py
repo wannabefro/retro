@@ -1,8 +1,11 @@
 """Tests for lib.report: the window guard, the three formatters, and bin/retro's verdict helpers."""
+import argparse
 import importlib.machinery
 import importlib.util
+import io
 import os
 import unittest
+from unittest import mock
 
 from lib.report import assert_window, format_clusters, format_ledger, format_verdicts
 
@@ -109,12 +112,14 @@ class FormatClustersTests(unittest.TestCase):
         text = format_clusters(clusters)
         self.assertNotIn("SIGNATURE", text)
 
-    def test_key_floor_holds_when_scope_pressure_exceeds_the_budget(self):
+    def test_scope_hard_cap_frees_key_room_even_under_single_row_pressure(self):
+        """A hard SCOPE cap holds with one row too, where the outlier cap cannot act."""
         clusters = [_cluster(key="a" * 200, count=1, per_day=0.1, sessions=1,
                               scope="project:" + "x" * 90)]
         row = format_clusters(clusters).splitlines()[1]
         parts = row.split()
-        self.assertEqual(len(parts[-1]), 24)
+        self.assertLessEqual(len(parts[3]), 22)
+        self.assertGreater(len(parts[-1]), 40)
         self.assertIn("\u2026", parts[-1])
         self.assertLessEqual(len(row), 100)
 
@@ -168,6 +173,23 @@ class OutlierWidthTests(unittest.TestCase):
         self.assertIn("HEADHEADHEAD:", key_line)
         self.assertIn(":TAILTAILTAIL", key_line)
         self.assertIn("…", key_line)
+
+    def test_two_rows_tied_at_max_scope_length_are_still_capped(self):
+        """A length tie defeats the outlier cap; the hard SCOPE maximum still holds."""
+        tied_scope = "project:" + "x" * 34
+        self.assertEqual(len(tied_scope), 42)
+        long_key = "permission_denied:Bash:permission denied by user:" + "z" * 30
+        clusters = [
+            _cluster(scope=tied_scope, key=long_key, count=134, per_day=19.14, sessions=57),
+            _cluster(scope=tied_scope, key="tool_error:McpToolCall:timeout", count=93,
+                      per_day=13.29, sessions=4),
+        ]
+        text = format_clusters(clusters)
+        row1 = text.splitlines()[1]
+        parts = row1.split()
+        self.assertLessEqual(len(parts[3]), 22)
+        self.assertGreater(len(parts[-1]), 40)
+        _assert_lines_fit(self, text)
 
 
 class HeaderIntegrityTests(unittest.TestCase):
@@ -266,6 +288,36 @@ class FormatVerdictsTests(unittest.TestCase):
         self.assertNotIn("kept", text)
         _assert_lines_fit(self, text)
 
+    def test_rebaseline_row_prints_the_recovery_line(self):
+        """A version-mismatch verdict tells the user to record a fresh baseline."""
+        rows = [{
+            "id": "rule-y",
+            "verdict": {
+                "status": "unmeasurable", "delta_pct": None,
+                "baseline_per_day": 4.0, "current_per_day": 3.0,
+                "reason": "The baseline used measure version old, the current run used new.",
+            },
+            "revert_hint": "",
+            "rebaseline": True,
+        }]
+        text = format_verdicts(rows)
+        self.assertIn("fresh baseline", text)
+        self.assertIn("rule-y", text)
+
+    def test_key_miss_unmeasurable_row_has_no_rebaseline_line(self):
+        """A key-miss unmeasurable row is a different case; it names no fresh baseline."""
+        rows = [{
+            "id": "rule-z",
+            "verdict": {
+                "status": "unmeasurable", "delta_pct": None,
+                "baseline_per_day": 4.0, "current_per_day": None,
+                "reason": "No cluster matches key 'no-such-key'.",
+            },
+            "revert_hint": "",
+        }]
+        text = format_verdicts(rows)
+        self.assertNotIn("fresh baseline", text)
+
 
 class UnmeasurableVerdictTests(unittest.TestCase):
     def test_key_miss_returns_none_not_a_zero_rate(self):
@@ -286,6 +338,73 @@ class UnmeasurableVerdictTests(unittest.TestCase):
         result = retro._unmeasurable_verdict(entry)
         self.assertEqual(result["status"], "unmeasurable")
         self.assertNotEqual(result["status"], "kept")
+
+
+class CmdVerifyVersionWiringTests(unittest.TestCase):
+    """cmd_verify must fingerprint the instrument once and pass it through."""
+
+    def _entry(self):
+        return {
+            "id": "rule-a",
+            "cluster_key": "tool_error:Bash:command not found",
+            "baseline": {"window_days": 14, "per_day": 2.5, "measure_version": "old-v"},
+            "artifact": {"revert": "abc1234"},
+        }
+
+    def test_verdict_and_apply_receive_the_same_version(self):
+        retro = _load_retro()
+        entry = self._entry()
+        current_record = {"key": entry["cluster_key"], "per_day": 1.0}
+        data = {"rules": [entry]}
+        verdict_calls = []
+        apply_calls = []
+
+        def fake_verdict(e, c, version=None):
+            verdict_calls.append(version)
+            return {"status": "kept", "delta_pct": -0.6,
+                     "baseline_per_day": 2.5, "current_per_day": 1.0}
+
+        def fake_apply(d, rule_id, c, now=None, current_version=None):
+            apply_calls.append(current_version)
+            return entry
+
+        with mock.patch.object(retro.ledger, "load", return_value=data), \
+             mock.patch.object(retro.ledger, "due", return_value=[entry]), \
+             mock.patch.object(retro.ledger, "save"), \
+             mock.patch.object(retro.measure, "measure_version", return_value="fixed-version"), \
+             mock.patch("lib.extract.discover", return_value=[]), \
+             mock.patch("lib.extract.extract_events", return_value=[]), \
+             mock.patch.object(retro.cluster, "cluster_all", return_value=([current_record], [])), \
+             mock.patch.object(retro.verify, "verdict", side_effect=fake_verdict), \
+             mock.patch.object(retro.verify, "apply_verdict", side_effect=fake_apply), \
+             mock.patch("sys.stdout", io.StringIO()):
+            retro.cmd_verify(argparse.Namespace(apply=True, json=True))
+
+        self.assertEqual(verdict_calls, ["fixed-version"])
+        self.assertEqual(apply_calls, ["fixed-version"])
+
+    def test_version_mismatch_flags_the_row_for_rebaseline_and_never_touches_git(self):
+        """The real verify.verdict must see the wired version and mark the row unmeasurable."""
+        retro = _load_retro()
+        entry = self._entry()
+        current_record = {"key": entry["cluster_key"], "per_day": 1.0}
+        data = {"rules": [entry]}
+
+        with mock.patch.object(retro.ledger, "load", return_value=data), \
+             mock.patch.object(retro.ledger, "due", return_value=[entry]), \
+             mock.patch.object(retro.measure, "measure_version", return_value="new-v"), \
+             mock.patch("lib.extract.discover", return_value=[]), \
+             mock.patch("lib.extract.extract_events", return_value=[]), \
+             mock.patch.object(retro.cluster, "cluster_all", return_value=([current_record], [])), \
+             mock.patch("subprocess.run") as fake_git:
+            buf = io.StringIO()
+            with mock.patch("sys.stdout", buf):
+                retro.cmd_verify(argparse.Namespace(apply=False, json=False))
+            fake_git.assert_not_called()
+
+        output = buf.getvalue()
+        self.assertIn("unmeasurable", output)
+        self.assertIn("fresh baseline", output)
 
 
 if __name__ == "__main__":

@@ -5,6 +5,8 @@ import re
 import tempfile
 from datetime import datetime, timedelta, timezone
 
+from lib.measure import measure_version
+
 DEFAULT_PATH = os.path.expanduser("~/.retro/ledger.json")
 
 
@@ -66,6 +68,7 @@ def add(data, cluster, artifact, probation_days=14, now=None):
             "window_days": cluster["window_days"],
             "count": cluster["count"],
             "per_day": cluster["per_day"],
+            "measure_version": measure_version(),
         },
         "checkpoint_at": checkpoint_at,
         "status": "probation",

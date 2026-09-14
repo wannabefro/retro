@@ -19,9 +19,9 @@ Use `--days N` to set the lookback window. The default is 30 days.
 
 ```
 $ retro scan
-COUNT  PER-DAY  SESSIONS  SCOPE        KEY
-   42     1.40        11  global       tool_error:Bash:command not found
-    8     0.27         5  project:app  retry_identical:Edit:same string not found
+COUNT  PER-DAY  SESSIONS  SCOPE                   KEY
+  134    19.14        57  global                  permission_denied:Bash:permission denied by user
+   94    13.43         4  project:app             tool_error:McpToolCall:timeout
 ```
 
 ### `retro ledger`
@@ -46,9 +46,20 @@ tool-error-bash-command-not-found  reverted  +12.0%          1.40         1.57
   tool-error-bash-command-not-found: still live. Run this to revert it: git revert 4cea91e
 ```
 
-`retro verify` does not revert anything by itself. Add `--apply` to write
-the verdict into the ledger. Even then, `retro verify` never runs `git`.
-When a rule reverts, run the printed `git revert` command yourself.
+`retro verify` never reverts anything. It only prints the `git revert`
+command. Even `--apply` never runs `git`. Add `--apply` to write the verdict
+into the ledger. When a rule reverts, run the printed command yourself.
+
+The measuring instrument can change since the baseline. Then
+`retro verify` refuses a verdict. It marks the rule `unmeasurable` and
+names the two versions. It never re-baselines the rule for you. Record a
+fresh baseline by hand. The rule then keeps its own history.
+
+## Cursor transcripts
+
+A Cursor transcript carries no tool results. `retro` can extract only two
+event kinds from it: a user interrupt and a compaction. Every other signal
+comes from Claude Code and Codex transcripts.
 
 ## JSON output
 

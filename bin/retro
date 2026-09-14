@@ -7,7 +7,7 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from lib import cluster, ledger, report, verify
+from lib import cluster, ledger, measure, report, verify
 
 
 def _find_current(cluster_key, passed, rejected):
@@ -59,6 +59,7 @@ def cmd_verify(args):
     from lib import extract
 
     data = ledger.load()
+    current_version = measure.measure_version()
     rows = []
     for entry in ledger.due(data):
         window_days = entry["baseline"]["window_days"]
@@ -71,14 +72,17 @@ def cmd_verify(args):
             result = _unmeasurable_verdict(entry)
             rows.append({"id": entry["id"], "verdict": result, "revert_hint": ""})
             continue
-        result = verify.verdict(entry, current)
+        result = verify.verdict(entry, current, current_version)
         revert_hint = ""
         if result["status"] == "reverted":
             sha = entry.get("artifact", {}).get("revert", "")
             revert_hint = f"git revert {sha}" if sha else "git revert <sha unknown>"
-        rows.append({"id": entry["id"], "verdict": result, "revert_hint": revert_hint})
+        row = {"id": entry["id"], "verdict": result, "revert_hint": revert_hint}
+        if result["status"] == "unmeasurable":
+            row["rebaseline"] = True
+        rows.append(row)
         if args.apply:
-            verify.apply_verdict(data, entry["id"], current)
+            verify.apply_verdict(data, entry["id"], current, current_version=current_version)
     if args.apply:
         ledger.save(data)
     if args.json:

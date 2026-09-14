@@ -4,9 +4,22 @@ from lib.ledger import get
 KEEP_THRESHOLD = -0.25
 
 
-def verdict(entry, current):
+def verdict(entry, current, current_version=None):
     baseline_per_day = entry["baseline"]["per_day"]
     current_per_day = current["per_day"]
+
+    if current_version is not None and entry["baseline"].get("measure_version") != current_version:
+        baseline_version = entry["baseline"].get("measure_version") or "unknown"
+        return {
+            "status": "unmeasurable",
+            "delta_pct": None,
+            "baseline_per_day": baseline_per_day,
+            "current_per_day": current_per_day,
+            "reason": (
+                f"The baseline used measure version {baseline_version}, the current run used "
+                f"{current_version}, so the comparison is not valid."
+            ),
+        }
 
     if baseline_per_day == 0:
         return {
@@ -40,11 +53,14 @@ def verdict(entry, current):
     }
 
 
-def apply_verdict(data, rule_id, current, now=None):
+def apply_verdict(data, rule_id, current, now=None, current_version=None):
     entry = get(data, rule_id)
     if entry is None:
         raise ValueError(f"no such rule: {rule_id}")
-    result = verdict(entry, current)
-    entry["result"] = result
-    entry["status"] = result["status"]
+    result = verdict(entry, current, current_version)
+    if result["status"] == "unmeasurable":
+        entry["result"] = dict(result, rebaseline=True)
+    else:
+        entry["result"] = result
+        entry["status"] = result["status"]
     return entry

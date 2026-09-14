@@ -11,6 +11,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from lib import ledger
 from lib import verify
+from lib.measure import measure_version
 
 
 def _cluster(key="tool_error:Bash:command not found", count=10, per_day=2.5,
@@ -95,7 +96,8 @@ class AddIdSlugTests(unittest.TestCase):
         self.assertEqual(entry["status"], "probation")
         self.assertEqual(entry["result"], {})
         self.assertEqual(entry["baseline"],
-                          {"window_days": 14, "count": 10, "per_day": 2.5})
+                          {"window_days": 14, "count": 10, "per_day": 2.5,
+                           "measure_version": measure_version()})
 
 
 class GetTests(unittest.TestCase):
@@ -166,6 +168,45 @@ class ApplyVerdictTests(unittest.TestCase):
         data = {"rules": []}
         with self.assertRaises(ValueError):
             verify.apply_verdict(data, "missing", {"per_day": 1.0})
+
+
+class AddStampsMeasureVersionTests(unittest.TestCase):
+    def test_add_stamps_current_measure_version(self):
+        data = {"rules": []}
+        entry = ledger.add(data, _cluster(), _artifact())
+        self.assertEqual(entry["baseline"]["measure_version"], measure_version())
+
+
+class VerdictMeasureVersionTests(unittest.TestCase):
+    def test_matching_version_matches_no_version_arg(self):
+        entry = {"baseline": {"per_day": 4.27, "measure_version": "abc123"}}
+        current = {"per_day": 0.2}
+        self.assertEqual(verify.verdict(entry, current, "abc123"), verify.verdict(entry, current))
+
+    def test_differing_version_is_unmeasurable_even_though_numbers_say_kept(self):
+        entry = {"baseline": {"per_day": 4.27, "measure_version": "old-version"}}
+        current = {"per_day": 0.2}
+        self.assertEqual(verify.verdict(entry, current)["status"], "kept")
+        result = verify.verdict(entry, current, "new-version")
+        self.assertEqual(result["status"], "unmeasurable")
+        self.assertIsNone(result["delta_pct"])
+
+    def test_missing_measure_version_is_treated_as_differing(self):
+        entry = {"baseline": {"per_day": 4.27}}
+        result = verify.verdict(entry, {"per_day": 0.2}, "new-version")
+        self.assertEqual(result["status"], "unmeasurable")
+
+
+class ApplyVerdictUnmeasurableTests(unittest.TestCase):
+    def test_status_stays_on_probation_and_rebaseline_is_flagged(self):
+        data = {"rules": []}
+        entry = ledger.add(data, _cluster(per_day=4.27), _artifact())
+        entry["baseline"]["measure_version"] = "old-version"
+        updated = verify.apply_verdict(
+            data, entry["id"], {"per_day": 0.2}, current_version="new-version")
+        self.assertEqual(updated["status"], "probation")
+        self.assertEqual(updated["result"]["status"], "unmeasurable")
+        self.assertTrue(updated["result"]["rebaseline"])
 
 
 if __name__ == "__main__":

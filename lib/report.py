@@ -4,9 +4,11 @@ MAX_LINE = 100
 COLUMN_GAP = 2
 MIN_KEY_WIDTH = 24
 OUTLIER_MARGIN = 2
+SCOPE_MAX_WIDTH = 22
 
 _CLUSTER_HEADERS = ["COUNT", "PER-DAY", "SESSIONS", "SCOPE", "KEY"]
 _CLUSTER_ALIGNS = ["right", "right", "right", "left", "left"]
+_CLUSTER_SCOPE_IDX = 3
 _CLUSTER_KEY_IDX = 4
 _LEDGER_HEADERS = ["ID", "SCOPE", "STATUS", "BASELINE/DAY", "CHECKPOINT", "VERDICT"]
 _LEDGER_ALIGNS = ["left", "left", "left", "right", "left", "left"]
@@ -58,9 +60,11 @@ def _fit_widths(widths, headers, max_line):
         total -= 1
 
 
-def _fit_key_widths(headers, rows, key_idx, max_line):
-    """Cap non-KEY columns, then give KEY the remaining line budget."""
+def _fit_key_widths(headers, rows, key_idx, max_line, hard_caps=None):
+    """Cap non-KEY columns, apply any hard caps, then give KEY the rest."""
     widths = _cap_outliers(headers, rows, key_idx)
+    for idx, cap in (hard_caps or {}).items():
+        widths[idx] = min(widths[idx], max(cap, len(headers[idx])))
     gaps = COLUMN_GAP * (len(headers) - 1)
     other_idxs = [i for i in range(len(headers)) if i != key_idx]
 
@@ -103,9 +107,9 @@ def _render_row(cells, widths, aligns, middle_idx=None):
     return (" " * COLUMN_GAP).join(parts).rstrip()
 
 
-def _table(headers, rows, aligns, max_line=MAX_LINE, key_idx=None, middle_idx=None):
+def _table(headers, rows, aligns, max_line=MAX_LINE, key_idx=None, middle_idx=None, hard_caps=None):
     if key_idx is not None:
-        widths = _fit_key_widths(headers, rows, key_idx, max_line)
+        widths = _fit_key_widths(headers, rows, key_idx, max_line, hard_caps)
     else:
         widths = _widths(headers, rows)
         _fit_widths(widths, headers, max_line)
@@ -124,7 +128,11 @@ def _cluster_rows(records):
 
 def _cluster_table(records):
     rows = _cluster_rows(records)
-    return _table(_CLUSTER_HEADERS, rows, _CLUSTER_ALIGNS, key_idx=_CLUSTER_KEY_IDX, middle_idx=_CLUSTER_KEY_IDX)
+    return _table(
+        _CLUSTER_HEADERS, rows, _CLUSTER_ALIGNS,
+        key_idx=_CLUSTER_KEY_IDX, middle_idx=_CLUSTER_KEY_IDX,
+        hard_caps={_CLUSTER_SCOPE_IDX: SCOPE_MAX_WIDTH},
+    )
 
 
 def format_clusters(clusters, rejected=None):
@@ -209,4 +217,9 @@ def format_verdicts(rows):
         elif status == "unmeasurable":
             reason = row["verdict"].get("reason", "")
             lines.append(f"  {row['id']}: unmeasurable. {reason}".rstrip())
+            if row.get("rebaseline"):
+                lines.append(
+                    f"  {row['id']}: record a fresh baseline under the new instrument; "
+                    "do not judge this one."
+                )
     return "\n".join(lines)

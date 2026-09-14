@@ -96,7 +96,7 @@ class ClassifyCauseTests(unittest.TestCase):
 
 class RedactTests(unittest.TestCase):
     def test_redacts_home_path(self):
-        self.assertEqual(extract.redact("/Users/sammctaggart/project/file.py"), "~/project/file.py")
+        self.assertEqual(extract.redact("/Users/example/project/file.py"), "~/project/file.py")
 
     def test_redacts_token(self):
         text = "leaked token ghp_1234567890abcdefghijklmnopqrstuvwxyz here"
@@ -158,7 +158,7 @@ class ScanForLeaksTests(unittest.TestCase):
         self.assertEqual(extract.scan_for_leaks(["a plain sentence with no leaks at all"]), [])
 
     def test_flags_home_path(self):
-        findings = extract.scan_for_leaks(["/Users/sammctaggart/project/file.py"])
+        findings = extract.scan_for_leaks(["/Users/example/project/file.py"])
         self.assertEqual([i for i, _ in findings], [0])
 
     def test_flags_email(self):
