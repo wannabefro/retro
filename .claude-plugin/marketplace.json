@@ -1,0 +1,13 @@
+{
+  "name": "retro",
+  "owner": {
+    "name": "Sam McTaggart"
+  },
+  "plugins": [
+    {
+      "name": "retro",
+      "source": "./",
+      "description": "Finds recurring coding-agent failures and puts fixes on probation."
+    }
+  ]
+}

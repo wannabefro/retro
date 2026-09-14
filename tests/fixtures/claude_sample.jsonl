@@ -1,0 +1,13 @@
+{"type": "user", "message": {"role": "user", "content": "hello, please list files"}, "timestamp": "2026-01-01T12:00:00.000Z", "cwd": "/Users/dev/project"}
+{"type": "assistant", "message": {"role": "assistant", "content": [{"type": "tool_use", "id": "t1", "name": "Bash", "input": {"command": "ls"}}]}, "timestamp": "2026-01-01T12:00:01.000Z"}
+{"type": "user", "message": {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "t1", "content": "file1.txt\nfile2.txt"}]}, "timestamp": "2026-01-01T12:00:02.000Z"}
+{"type": "assistant", "message": {"role": "assistant", "content": [{"type": "tool_use", "id": "t2", "name": "Bash", "input": {"command": "catt file.txt"}}]}, "timestamp": "2026-01-01T12:00:03.000Z"}
+{"type": "user", "message": {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "t2", "is_error": true, "content": "zsh: command not found: catt"}]}, "timestamp": "2026-01-01T12:00:04.000Z"}
+{"type": "assistant", "message": {"role": "assistant", "content": [{"type": "tool_use", "id": "t3", "name": "Read", "input": {"file_path": "/tmp/a.txt"}}]}, "timestamp": "2026-01-01T12:00:05.000Z"}
+{"type": "user", "message": {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "t3", "content": "line one"}]}, "timestamp": "2026-01-01T12:00:06.000Z"}
+{"type": "assistant", "message": {"role": "assistant", "content": [{"type": "tool_use", "id": "t4", "name": "Read", "input": {"file_path": "/tmp/a.txt"}}]}, "timestamp": "2026-01-01T12:00:07.000Z"}
+{"type": "user", "message": {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "t4", "content": "line one"}]}, "timestamp": "2026-01-01T12:00:08.000Z"}
+{"type": "user", "message": {"role": "user", "content": "[Request interrupted by user for tool use]"}, "timestamp": "2026-01-01T12:00:09.000Z"}
+{"type": "user", "isCompactSummary": true, "message": {"role": "user", "content": "Compacted summary of the conversation so far."}, "timestamp": "2026-01-01T12:00:10.000Z"}
+{"type": "assistant", "message": {"role": "assistant", "content": [{"type": "tool_use", "id": "t5", "name": "Edit", "input": {"file_path": "/tmp/b.txt", "old_string": "x", "new_string": "y"}}]}, "timestamp": "2026-01-01T12:00:11.000Z"}
+{"type": "user", "toolDenialKind": "user-rejected", "message": {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "t5", "is_error": true, "content": "The user rejected this tool call."}]}, "timestamp": "2026-01-01T12:00:12.000Z"}

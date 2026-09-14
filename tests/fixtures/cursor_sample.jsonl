@@ -1,0 +1,5 @@
+{"role": "user", "message": {"content": [{"type": "text", "text": "hi there"}]}}
+{"role": "assistant", "message": {"content": [{"type": "text", "text": "hello"}]}}
+{"role": "user", "message": {"content": [{"type": "text", "text": "looks like an error"}]}, "is_error": true, "tool_result": {"is_error": true, "content": "fake failure text"}}
+{"role": "user", "message": {"content": [{"type": "text", "text": "[Request interrupted by user for tool use]"}]}}
+{"role": "user", "isCompactSummary": true, "message": {"content": [{"type": "text", "text": "summary of earlier turns"}]}}

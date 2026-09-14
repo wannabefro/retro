@@ -1,0 +1,10 @@
+{"type": "session_meta", "timestamp": "2026-01-02T09:00:00.000Z", "payload": {"id": "sess1", "cwd": "/home/dev/myproj", "cli_version": "1.0.0"}}
+{"type": "response_item", "timestamp": "2026-01-02T09:00:01.000Z", "payload": {"type": "message", "role": "user", "content": [{"type": "input_text", "text": "run the tests"}]}}
+{"type": "response_item", "timestamp": "2026-01-02T09:00:02.000Z", "payload": {"type": "function_call", "call_id": "c1", "name": "exec_command", "arguments": "{\"command\": \"pytest\"}"}}
+{"type": "event_msg", "timestamp": "2026-01-02T09:00:03.000Z", "payload": {"type": "item_completed", "item": {"item_type": "CommandExecution", "id": "c1", "status": "failed", "command": "pytest", "stderr": "2 tests failed: test_foo, test_bar", "exit_code": 1}}}
+{"type": "response_item", "timestamp": "2026-01-02T09:00:04.000Z", "payload": {"type": "function_call", "call_id": "c2", "name": "apply_patch", "arguments": "{\"path\": \"a.py\"}"}}
+{"type": "event_msg", "timestamp": "2026-01-02T09:00:05.000Z", "payload": {"type": "item_completed", "item": {"type": "FileChange", "id": "c2", "status": "declined", "stderr": "user declined the file change"}}}
+{"type": "response_item", "timestamp": "2026-01-02T09:00:06.000Z", "payload": {"type": "function_call", "call_id": "c3", "name": "exec_command", "arguments": "{\"command\": \"ls\"}"}}
+{"type": "response_item", "timestamp": "2026-01-02T09:00:07.000Z", "payload": {"type": "function_call", "call_id": "c4", "name": "exec_command", "arguments": "{\"command\": \"ls\"}"}}
+{"type": "event_msg", "timestamp": "2026-01-02T09:00:08.000Z", "payload": {"type": "turn_aborted", "reason": "interrupted", "turn_id": "turn1"}}
+{"type": "compacted", "timestamp": "2026-01-02T09:00:09.000Z", "payload": {"message": "Conversation compacted."}}

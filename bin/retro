@@ -1,0 +1,123 @@
+#!/usr/bin/env python3
+"""Command-line entry point for retro: scan, ledger, and verify."""
+import argparse
+import json
+import os
+import sys
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from lib import cluster, ledger, report, verify
+
+
+def _find_current(cluster_key, passed, rejected):
+    for record in passed + rejected:
+        if record["key"] == cluster_key:
+            return record
+    return None
+
+
+def _unmeasurable_verdict(entry):
+    """Report a key miss as unknown, never as a measured zero rate."""
+    return {
+        "status": "unmeasurable",
+        "delta_pct": None,
+        "baseline_per_day": entry["baseline"]["per_day"],
+        "current_per_day": None,
+        "reason": f"No cluster matches key {entry['cluster_key']!r}.",
+    }
+
+
+def cmd_scan(args):
+    from lib import extract
+
+    report.assert_window(args.days, args.days)
+    paths = extract.discover(since_days=args.days)
+    events = list(extract.extract_events(paths, since_days=args.days))
+    passed, rejected = cluster.cluster_all(events, window_days=args.days)
+    if args.json:
+        payload = {"passed": passed}
+        if args.all:
+            payload["rejected"] = rejected
+        print(json.dumps(payload, indent=2, default=str))
+    else:
+        print(report.format_clusters(passed, rejected if args.all else None))
+    return 0
+
+
+def cmd_ledger(args):
+    data = ledger.load()
+    entries = data.get("rules", [])
+    if args.json:
+        print(json.dumps(entries, indent=2))
+    else:
+        print(report.format_ledger(entries))
+    return 0
+
+
+def cmd_verify(args):
+    from lib import extract
+
+    data = ledger.load()
+    rows = []
+    for entry in ledger.due(data):
+        window_days = entry["baseline"]["window_days"]
+        report.assert_window(window_days, window_days)
+        paths = extract.discover(since_days=window_days)
+        events = list(extract.extract_events(paths, since_days=window_days))
+        passed, rejected = cluster.cluster_all(events, window_days=window_days)
+        current = _find_current(entry["cluster_key"], passed, rejected)
+        if current is None:
+            result = _unmeasurable_verdict(entry)
+            rows.append({"id": entry["id"], "verdict": result, "revert_hint": ""})
+            continue
+        result = verify.verdict(entry, current)
+        revert_hint = ""
+        if result["status"] == "reverted":
+            sha = entry.get("artifact", {}).get("revert", "")
+            revert_hint = f"git revert {sha}" if sha else "git revert <sha unknown>"
+        rows.append({"id": entry["id"], "verdict": result, "revert_hint": revert_hint})
+        if args.apply:
+            verify.apply_verdict(data, entry["id"], current)
+    if args.apply:
+        ledger.save(data)
+    if args.json:
+        print(json.dumps(rows, indent=2))
+    else:
+        print(report.format_verdicts(rows))
+    return 0
+
+
+def build_parser():
+    parser = argparse.ArgumentParser(
+        prog="retro",
+        description="Find recurring coding-agent failures and put fixes on probation.",
+    )
+    sub = parser.add_subparsers(dest="command", required=True)
+
+    scan = sub.add_parser("scan", help="Cluster recent failures into ranked groups.")
+    scan.add_argument("--days", type=int, default=30, help="Look back this many days.")
+    scan.add_argument("--json", action="store_true", help="Print the clusters as JSON.")
+    scan.add_argument("--all", action="store_true", help="Also show clusters below the gate.")
+    scan.set_defaults(func=cmd_scan)
+
+    ledger_cmd = sub.add_parser("ledger", help="List every rule and its probation status.")
+    ledger_cmd.add_argument("--json", action="store_true", help="Print the entries as JSON.")
+    ledger_cmd.set_defaults(func=cmd_ledger)
+
+    verify_cmd = sub.add_parser("verify", help="Re-measure due rules against their baseline.")
+    verify_cmd.add_argument("--apply", action="store_true", help="Write the verdict to the ledger.")
+    verify_cmd.add_argument("--json", action="store_true", help="Print the verdicts as JSON.")
+    verify_cmd.set_defaults(func=cmd_verify)
+
+    return parser
+
+
+def main(argv=None):
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    return args.func(args)
+
+
+if __name__ == "__main__":
+    sys.exit(main())
