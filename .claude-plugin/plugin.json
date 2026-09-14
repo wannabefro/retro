@@ -1,8 +1,11 @@
 {
   "name": "retro",
-  "version": "0.1.0",
+  "version": "0.3.0",
   "description": "Finds recurring failures in past coding-agent sessions and puts every rule it writes on probation against a measured baseline.",
   "author": {
     "name": "Sam McTaggart"
-  }
+  },
+  "commands": "./commands",
+  "skills": "./skills",
+  "hooks": "./hooks/hooks.json"
 }

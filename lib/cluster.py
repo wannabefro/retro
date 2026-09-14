@@ -2,12 +2,14 @@
 
 NOISE_CAUSES = frozenset({"test or build failure", "expected exit"})
 NOISE_KINDS = frozenset({"retry_identical", "compaction"})
+# "permission denied by user" says only that something was refused, never what: as uninformative as "other".
+UNINFORMATIVE_CAUSES = frozenset({"other", "permission denied by user"})
 
 
 def cluster_key(event):
     """Build the group key, adding the signature only when cause carries no information."""
     base = f"{event['kind']}:{event['tool']}:{event['cause']}"
-    if event["cause"] == "other":
+    if event["cause"] in UNINFORMATIVE_CAUSES:
         return f"{base}:{event['signature']}"
     return base
 
@@ -30,7 +32,7 @@ def cluster_all(events, window_days=30, min_count=5, min_sessions=3, drop_noise=
             "kind": event["kind"],
             "tool": event["tool"],
             "cause": event["cause"],
-            "signature": event["signature"] if event["cause"] == "other" else "",
+            "signature": event["signature"] if event["cause"] in UNINFORMATIVE_CAUSES else "",
             "sessions": set(),
             "projects": set(),
             "harnesses": set(),

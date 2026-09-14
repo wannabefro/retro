@@ -1,13 +1,14 @@
 #!/usr/bin/env python3
-"""Command-line entry point for retro: scan, ledger, and verify."""
+"""Command-line entry point for retro: scan, ledger, propose, record, and verify."""
 import argparse
 import json
 import os
 import sys
+from datetime import datetime
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from lib import cluster, ledger, measure, report, verify
+from lib import cluster, ledger, measure, propose, report, verify
 
 
 def _find_current(cluster_key, passed, rejected):
@@ -55,6 +56,80 @@ def cmd_ledger(args):
     return 0
 
 
+def cmd_propose(args):
+    from lib import extract
+
+    report.assert_window(args.days, args.days)
+    paths = extract.discover(since_days=args.days)
+    events = list(extract.extract_events(paths, since_days=args.days))
+    passed, _ = cluster.cluster_all(events, window_days=args.days)
+    data = ledger.load()
+    briefs, skipped = propose.build_briefs(events, passed, data, args.limit, scope=args.scope)
+    if args.json:
+        print(json.dumps({"briefs": briefs, "skipped": skipped}, indent=2, default=str))
+    else:
+        print(propose.format_briefs(briefs, skipped))
+    return 0
+
+
+def cmd_record(args):
+    from lib import extract
+
+    if propose.is_protected_path(args.path):
+        print(
+            f"{args.path} resolves to a protected artifact path; retro will not "
+            "baseline a rule for it.",
+            file=sys.stderr,
+        )
+        return 6
+
+    data = ledger.load()
+    rules = data.get("rules", [])
+
+    on_probation = next(
+        (r for r in rules if r["cluster_key"] == args.key and r["status"] == "probation"), None
+    )
+    if on_probation is not None:
+        print(
+            f"{on_probation['id']} already holds key {args.key!r} on probation.",
+            file=sys.stderr,
+        )
+        return 4
+
+    reverted = next(
+        (r for r in rules if r["cluster_key"] == args.key and r["status"] == "reverted"), None
+    )
+    if reverted is not None and not args.force:
+        print(
+            f"Key {args.key!r} was reverted once already ({reverted['id']}). The rule "
+            "is disproved. Pass --force to record it again.",
+            file=sys.stderr,
+        )
+        return 5
+
+    report.assert_window(args.days, args.days)
+    paths = extract.discover(since_days=args.days)
+    events = list(extract.extract_events(paths, since_days=args.days))
+    passed, rejected = cluster.cluster_all(events, window_days=args.days)
+    current = _find_current(args.key, passed, rejected)
+    if current is None:
+        print(
+            f"No current cluster matches key {args.key!r}. You cannot baseline "
+            "something you cannot measure.",
+            file=sys.stderr,
+        )
+        return 3
+
+    artifact = {"type": args.type, "path": args.path}
+    if args.revert:
+        artifact["revert"] = args.revert
+
+    entry = ledger.add(data, current, artifact, probation_days=args.probation_days)
+    ledger.save(data)
+    print(report.format_ledger([entry]))
+    return 0
+
+
 def cmd_verify(args):
     from lib import extract
 
@@ -92,6 +167,75 @@ def cmd_verify(args):
     return 0
 
 
+_SESSION_HEADERS = ["ENDED", "PROJECT", "HARNESS", "EVENTS", "NOISY", "TOP SIGNATURE"]
+_SESSION_ALIGNS = ["left", "left", "left", "right", "left", "left"]
+_SESSION_SIG_IDX = 5
+
+
+def _format_ended(ended_at):
+    """Render an ended_at ISO timestamp as date and time to the minute."""
+    try:
+        return datetime.strptime(ended_at, "%Y-%m-%dT%H:%M:%SZ").strftime("%Y-%m-%d %H:%M")
+    except (TypeError, ValueError):
+        return ended_at or ""
+
+
+def _session_rows(profiles):
+    rows = []
+    for entry in profiles:
+        top = entry.get("top_signatures") or []
+        rows.append([
+            _format_ended(entry.get("ended_at")),
+            entry.get("project", ""),
+            entry.get("harness", ""),
+            str(entry.get("events", 0)),
+            "noisy" if entry.get("noisy") else "",
+            top[0][0] if top else "",
+        ])
+    return rows
+
+
+def _format_sessions(profiles):
+    """Render session profiles as a table, reusing report's key-column layout."""
+    if not profiles:
+        return "No sessions match."
+    return report._table(
+        _SESSION_HEADERS, _session_rows(profiles), _SESSION_ALIGNS,
+        key_idx=_SESSION_SIG_IDX, middle_idx=_SESSION_SIG_IDX,
+    )
+
+
+def cmd_session(args):
+    from lib import session
+
+    path = args.path or session.DEFAULT_SESSIONS_PATH
+    if not os.path.isfile(path):
+        print("No sessions are recorded yet.")
+        return 0
+
+    profiles = []
+    with open(path) as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                profiles.append(json.loads(line))
+            except (json.JSONDecodeError, ValueError):
+                continue
+
+    profiles.sort(key=lambda p: p.get("ended_at", ""), reverse=True)
+    if args.noisy:
+        profiles = [p for p in profiles if p.get("noisy")]
+    profiles = profiles[: args.limit]
+
+    if args.json:
+        print(json.dumps(profiles, indent=2))
+    else:
+        print(_format_sessions(profiles))
+    return 0
+
+
 def build_parser():
     parser = argparse.ArgumentParser(
         prog="retro",
@@ -109,10 +253,49 @@ def build_parser():
     ledger_cmd.add_argument("--json", action="store_true", help="Print the entries as JSON.")
     ledger_cmd.set_defaults(func=cmd_ledger)
 
+    propose_cmd = sub.add_parser(
+        "propose", help="Prepare judgement briefs for the top eligible clusters."
+    )
+    propose_cmd.add_argument("--days", type=int, default=30, help="Look back this many days.")
+    propose_cmd.add_argument("--limit", type=int, default=5, help="Show at most this many briefs.")
+    propose_cmd.add_argument(
+        "--scope", default=None, help="Keep only this scope: global or project:NAME."
+    )
+    propose_cmd.add_argument("--json", action="store_true", help="Print the briefs as JSON.")
+    propose_cmd.set_defaults(func=cmd_propose)
+
+    record_cmd = sub.add_parser(
+        "record", help="Put a written rule on probation against a measured baseline."
+    )
+    record_cmd.add_argument("--key", required=True, help="The cluster key the rule targets.")
+    record_cmd.add_argument(
+        "--type", required=True, choices=["hook", "prose", "script"],
+        help="The kind of artifact the rule wrote.",
+    )
+    record_cmd.add_argument("--path", required=True, help="The path to the written artifact.")
+    record_cmd.add_argument("--revert", default=None, help="The commit SHA that reverts it.")
+    record_cmd.add_argument(
+        "--probation-days", type=int, default=14, dest="probation_days",
+        help="Days before the rule's checkpoint.",
+    )
+    record_cmd.add_argument("--days", type=int, default=30, help="Measure the baseline over this many days.")
+    record_cmd.add_argument(
+        "--force", action="store_true",
+        help="Override the previously-reverted refusal only.",
+    )
+    record_cmd.set_defaults(func=cmd_record)
+
     verify_cmd = sub.add_parser("verify", help="Re-measure due rules against their baseline.")
     verify_cmd.add_argument("--apply", action="store_true", help="Write the verdict to the ledger.")
     verify_cmd.add_argument("--json", action="store_true", help="Print the verdicts as JSON.")
     verify_cmd.set_defaults(func=cmd_verify)
+
+    session_cmd = sub.add_parser("session", help="List recently finished sessions from the session log.")
+    session_cmd.add_argument("--limit", type=int, default=10, help="Show at most this many sessions.")
+    session_cmd.add_argument("--noisy", action="store_true", help="Show only noisy sessions.")
+    session_cmd.add_argument("--json", action="store_true", help="Print the sessions as JSON.")
+    session_cmd.add_argument("--path", default=None, help="Read the session log from this path instead.")
+    session_cmd.set_defaults(func=cmd_session)
 
     return parser
 

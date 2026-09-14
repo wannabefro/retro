@@ -1,7 +1,9 @@
 """Tests for lib.cluster: grouping, noise suppression, cluster_key, scope, and promote."""
 import unittest
 
-from lib.cluster import cluster, cluster_all, cluster_key, promote, NOISE_CAUSES, NOISE_KINDS
+from lib.cluster import (
+    cluster, cluster_all, cluster_key, promote, NOISE_CAUSES, NOISE_KINDS, UNINFORMATIVE_CAUSES,
+)
 
 
 def ev(session="/tmp/s1.jsonl", harness="claude", project="app", ts=1000.0,
@@ -191,6 +193,55 @@ class ClusterKeyTests(unittest.TestCase):
         plain_events = [ev(session=f"c{i}", cause="command not found") for i in range(5)]
         passed2, _ = cluster_all(plain_events, min_count=5, min_sessions=3)
         self.assertEqual(passed2[0]["signature"], "")
+
+
+class UninformativeCauseTests(unittest.TestCase):
+    def test_key_includes_signature_for_permission_denied_by_user(self):
+        event = ev(cause="permission denied by user", signature="rm:-rf")
+        self.assertEqual(cluster_key(event), "tool_error:Bash:permission denied by user:rm:-rf")
+
+    def test_key_excludes_signature_for_timeout(self):
+        event = ev(cause="timeout", signature="curl:28")
+        self.assertEqual(cluster_key(event), "tool_error:Bash:timeout")
+
+    def test_key_excludes_signature_for_file_not_found(self):
+        event = ev(cause="file not found", signature="cat:1")
+        self.assertEqual(cluster_key(event), "tool_error:Bash:file not found")
+
+    def test_uninformative_causes_constant_names_exactly_two_causes(self):
+        self.assertEqual(UNINFORMATIVE_CAUSES, frozenset({"other", "permission denied by user"}))
+
+    def test_record_signature_matches_key_treatment_for_other(self):
+        events = [ev(session=f"a{i}", cause="other", signature="git:128") for i in range(5)]
+        passed, _ = cluster_all(events, min_count=5, min_sessions=3)
+        self.assertEqual(passed[0]["signature"], "git:128")
+        self.assertIn(":git:128", passed[0]["key"])
+
+    def test_record_signature_matches_key_treatment_for_permission_denied_by_user(self):
+        events = [
+            ev(session=f"a{i}", cause="permission denied by user", signature="rm:-rf")
+            for i in range(5)
+        ]
+        passed, _ = cluster_all(events, min_count=5, min_sessions=3)
+        self.assertEqual(passed[0]["signature"], "rm:-rf")
+        self.assertIn(":rm:-rf", passed[0]["key"])
+
+    def test_record_signature_blank_for_informative_cause(self):
+        events = [ev(session=f"a{i}", cause="timeout") for i in range(5)]
+        passed, _ = cluster_all(events, min_count=5, min_sessions=3)
+        self.assertEqual(passed[0]["signature"], "")
+
+    def test_permission_denied_by_user_splits_into_two_clusters_by_signature(self):
+        events = (
+            [ev(session=f"a{i}", cause="permission denied by user", signature="rm:-rf") for i in range(5)]
+            + [ev(session=f"b{i}", cause="permission denied by user", signature="git:push") for i in range(5)]
+        )
+        passed, _ = cluster_all(events, min_count=5, min_sessions=3)
+        keys = {r["key"] for r in passed}
+        self.assertEqual(keys, {
+            "tool_error:Bash:permission denied by user:rm:-rf",
+            "tool_error:Bash:permission denied by user:git:push",
+        })
 
 
 class ExamplesTests(unittest.TestCase):
